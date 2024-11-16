@@ -81,6 +81,7 @@ stroke-prediction-app/
 ├── healthcare-dataset-stroke-data.csv    # Dataset
 ├── knn_model.pkl             # Model KNN yang sudah dilatih
 ├── scaler.pkl                # Scaler untuk normalisasi data
+├── training.py                # File training
 └── README.md                 # Dokumentasi
 ```
 
