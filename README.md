@@ -37,7 +37,7 @@ matplotlib==3.7.1
 1. Clone repository
 
 ```bash
-git clone https://github.com/[username]/stroke-prediction-app.git
+git clone https://github.com/syaifuldani/stroke-prediction-app.git
 cd stroke-prediction-app
 ```
 
