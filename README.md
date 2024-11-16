@@ -77,8 +77,7 @@ streamlit run app.py
 
 ```
 stroke-prediction-app/
-├── app.py                     # File utama aplikasi
-├── requirements.txt           # Daftar dependency
+├── main.py                     # File utama aplikasi
 ├── healthcare-dataset-stroke-data.csv    # Dataset
 ├── knn_model.pkl             # Model KNN yang sudah dilatih
 ├── scaler.pkl                # Scaler untuk normalisasi data
