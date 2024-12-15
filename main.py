@@ -6,6 +6,12 @@ from sklearn.preprocessing import LabelEncoder,MinMaxScaler
 import pickle
 import matplotlib.pyplot as plt
 import seaborn as sns
+from sklearn.naive_bayes import GaussianNB
+from sklearn.metrics import accuracy_score, precision_score, recall_score, f1_score, confusion_matrix
+from sklearn.svm import SVC
+from imblearn.over_sampling import SMOTE
+from collections import Counter
+from sklearn.model_selection import train_test_split
 
 # Set page config
 st.set_page_config(
@@ -16,9 +22,14 @@ st.set_page_config(
 
 @st.cache_resource
 def load_model():
-    model = pickle.load(open('knn_model.pkl', 'rb'))
-    scaler = pickle.load(open('scaler.pkl', 'rb'))
-    return model, scaler
+    try:
+        # Load best model berdasarkan hasil evaluasi
+        best_model = pickle.load(open('knn_model.pkl', 'rb'))
+        scaler = pickle.load(open('scaler.pkl', 'rb'))
+        return best_model, scaler
+    except FileNotFoundError:
+        st.error("Model belum dilatih. Silakan latih model terlebih dahulu di halaman Modeling & Evaluasi")
+        return None, None
 
 # Function to load the model and preprocessors
 @st.cache_data
@@ -26,16 +37,14 @@ def load_data():
     df = pd.read_csv('healthcare-dataset-stroke-data.csv')
     # Hapus ID
     df = df.drop('id', axis=1)
-    # Hapus kategori 'Other' di gender dan 'Unknown' di smoking_status
-    df = df[df['gender'] != 'Other']
-    df = df[df['smoking_status'] != 'Unknown']
+    # df = df[df['smoking_status'] != 'Unknown']
     return df
 
 def preprocess_input(data):
     # Membuat instance LabelEncoder baru untuk setiap kolom kategorikal
     # Gender
     le_gender = LabelEncoder()
-    le_gender.fit(['Female', 'Male'])
+    le_gender.fit(['Female', 'Male','Other'])
     data['gender'] = le_gender.transform(data['gender'])
     
     # Ever married
@@ -69,19 +78,18 @@ def show_predict_page():
     def get_dataset_info():
         df = pd.read_csv('healthcare-dataset-stroke-data.csv')
         # Preprocessing seperti pada training
-        df = df[df['gender'] != 'Other']
-        df = df[df['smoking_status'] != 'Unknown']
+        # df = df[df['smoking_status'] != 'Unknown']
         df = df.drop('id', axis=1)
         return len(df)
     
     total_data = get_dataset_info()
-    st.info(f"Model ini dilatih menggunakan {total_data} data yang telah dibersihkan (tanpa kategori 'Other' pada gender dan 'Unknown' pada smoking status)")
+    st.info(f"Model ini dilatih menggunakan {total_data} data yang telah dibersihkan")
     
     with st.form("prediction_form"):
         col1, col2 = st.columns(2)
         
         with col1:
-            gender = st.selectbox('Jenis Kelamin:', ['Female', 'Male'])  # Removed 'Other'
+            gender = st.selectbox('Jenis Kelamin:', ['Female', 'Male','Other'])
             age = st.number_input('Usia:', min_value=0, max_value=120, value=30)
             hypertension = st.selectbox('Hipertensi:', ['0', '1'], help='0: Tidak, 1: Ya')
             heart_disease = st.selectbox('Penyakit Jantung:', ['0', '1'], help='0: Tidak, 1: Ya')
@@ -95,7 +103,7 @@ def show_predict_page():
                                               min_value=0.0, max_value=300.0, value=90.0)
             bmi = st.number_input('BMI:', min_value=0.0, max_value=60.0, value=23.0)
             smoking_status = st.selectbox('Status Merokok:', 
-                                        ['never smoked', 'formerly smoked', 'smokes'])  # Removed 'Unknown'
+                                        ['never smoked', 'formerly smoked', 'smokes','unknown'])
 
         submitted = st.form_submit_button("Prediksi")
         
@@ -141,7 +149,7 @@ def show_predict_page():
             
             # Smoking status encoding
             le_smoking = LabelEncoder()
-            le_smoking.fit(['formerly smoked', 'never smoked', 'smokes'])
+            le_smoking.fit(['formerly smoked', 'never smoked', 'smokes','unknown'])
             input_df['smoking_status'] = le_smoking.transform(input_df['smoking_status'])
             
             # Scale numerical features
@@ -209,7 +217,8 @@ def show_predict_page():
                 2. Lakukan pemeriksaan kesehatan secara berkala
                 3. Hindari faktor risiko stroke
                 """)
-                
+            
+
 def show_data_page():
     st.title("Data Stroke Prediction")
     
@@ -235,14 +244,12 @@ def show_data_page():
     data_cleaned = data.copy()
     # Hapus kolom ID
     data_cleaned = data_cleaned.drop('id', axis=1)
-    # Hapus kategori 'Other' di gender
-    data_cleaned = data_cleaned[data_cleaned['gender'] != 'Other']
     # Hapus kategori 'Unknown' di smoking_status
-    data_cleaned = data_cleaned[data_cleaned['smoking_status'] != 'Unknown']
+    # data_cleaned = data_cleaned[data_cleaned['smoking_status'] != 'Unknown']
     
     # Tampilkan dataset setelah cleaning
     st.subheader("Dataset Setelah Cleaning")
-    st.write("Data setelah menghapus kategori 'Other' pada gender dan 'Unknown' pada smoking_status:")
+    st.write("Data setelah menghapus kategori 'Unknown' pada smoking_status:")
     st.dataframe(data_cleaned)
     st.write(f"Jumlah data setelah cleaning: {data_cleaned.shape[0]} baris")
     
@@ -255,6 +262,7 @@ def show_data_page():
         1. **gender**: Jenis kelamin pasien
             - Male
             - Female
+            - Other
         
         2. **age**: Usia pasien
         
@@ -386,10 +394,8 @@ def show_preprocessing_page():
     
     # Hapus kolom ID
     data = data.drop('id', axis=1)
-    # Hapus kategori 'Other' di gender
-    data = data[data['gender'] != 'Other']
     # Hapus kategori 'Unknown' di smoking_status
-    data = data[data['smoking_status'] != 'Unknown']
+    # data = data[data['smoking_status'] != 'Unknown']
     
     with col2:
         st.write("Data setelah cleaning:")
@@ -571,41 +577,109 @@ def show_preprocessing_page():
         axes[i].set_title(f'Distribusi {col} setelah Normalisasi')
     plt.tight_layout()
     st.pyplot(fig)
-    
-    # Ringkasan Preprocessing
-    st.header("Ringkasan Preprocessing")
-    st.write("""
-    1. **Cleaning Data**:
-       - Menghapus kolom ID yang tidak diperlukan
-       
-    2. **Handling Missing Value**:
-       - Mengidentifikasi missing value pada dataset
-       - Mengisi missing value pada kolom BMI dengan nilai median
-       
-    3. **Konversi Data Kategorik**:
-       - Mengubah variabel kategorik menjadi numerik menggunakan Label Encoding
-       - Kolom yang diubah: gender, ever_married, work_type, Residence_type, smoking_status
-       
-    4. **Pemisahan Target**:
-       - Memisahkan kolom stroke sebagai target
-       - Menyiapkan features dan target untuk modeling
-       
-    5. **Normalisasi Data**:
-       - Menormalisasi fitur numerik (age, avg_glucose_level, bmi)
-       - Menggunakan Min-Max Scaler untuk transformasi ke range [0,1]
-    """)
+
+    # 7. SMOTE (Synthetic Minority Over-sampling Technique)
+    st.header("7. Penanganan Imbalanced Data dengan SMOTE")
+    st.write("Melakukan oversampling pada kelas minoritas menggunakan teknik SMOTE.")
+
+    # Import SMOTE
+    from imblearn.over_sampling import SMOTE
+    from collections import Counter
+
+    # Tampilkan distribusi kelas sebelum SMOTE
+    st.subheader("Distribusi Kelas Sebelum SMOTE:")
+    class_dist_before = pd.Series(y).value_counts()
+    st.write("Jumlah sampel per kelas:")
+    st.write(class_dist_before)
+
+    # Visualisasi distribusi sebelum SMOTE
+    fig1, ax1 = plt.subplots(figsize=(8, 6))
+    plt.pie(class_dist_before.values, 
+            labels=['Tidak Stroke', 'Stroke'], 
+            autopct='%1.1f%%',
+            colors=['lightblue', 'lightcoral'])
+    plt.title('Distribusi Kelas Sebelum SMOTE')
+    st.pyplot(fig1)
+
+    # Terapkan SMOTE
+    smote = SMOTE(random_state=42)
+    X_resampled, y_resampled = smote.fit_resample(X, y)
+
+    # Tampilkan distribusi kelas setelah SMOTE
+    st.subheader("Distribusi Kelas Setelah SMOTE:")
+    class_dist_after = pd.Series(y_resampled).value_counts()
+    st.write("Jumlah sampel per kelas:")
+    st.write(class_dist_after)
+
+    # Visualisasi distribusi setelah SMOTE
+    fig2, ax2 = plt.subplots(figsize=(8, 6))
+    plt.pie(class_dist_after.values, 
+            labels=['Tidak Stroke', 'Stroke'], 
+            autopct='%1.1f%%',
+            colors=['lightblue', 'lightcoral'])
+    plt.title('Distribusi Kelas Setelah SMOTE')
+    st.pyplot(fig2)
+
+    # Perbandingan jumlah sampel
+    st.subheader("Perbandingan Jumlah Sampel:")
+    comparison_df = pd.DataFrame({
+        'Sebelum SMOTE': class_dist_before,
+        'Setelah SMOTE': class_dist_after
+    })
+    st.write(comparison_df)
+
+    # Visualisasi perbandingan
+    fig3, ax3 = plt.subplots(figsize=(10, 6))
+    comparison_df.plot(kind='bar', ax=ax3)
+    plt.title('Perbandingan Jumlah Sampel Sebelum dan Setelah SMOTE')
+    plt.xlabel('Kelas')
+    plt.ylabel('Jumlah Sampel')
+    plt.xticks(rotation=45)
+    plt.legend(title='')
+    plt.tight_layout()
+    st.pyplot(fig3)
+
+    # Penjelasan SMOTE
+    with st.expander("Penjelasan Teknik SMOTE"):
+        st.markdown("""
+        ### SMOTE (Synthetic Minority Over-sampling Technique)
+        
+        SMOTE adalah teknik untuk menangani masalah ketidakseimbangan kelas (imbalanced class) dengan cara membuat sampel sintetis dari kelas minoritas.
+        
+        #### Cara Kerja SMOTE:
+        1. Mengidentifikasi kelas minoritas
+        2. Untuk setiap sampel di kelas minoritas:
+            - Mencari k-nearest neighbors
+            - Memilih secara acak satu dari k-nearest neighbors
+            - Membuat sampel sintetis di antara sampel asli dan neighbor yang dipilih
+        
+        #### Keuntungan SMOTE:
+        - Mengurangi risiko overfitting dibandingkan random oversampling
+        - Menghasilkan sampel sintetis yang masuk akal
+        - Meningkatkan performa model pada kelas minoritas
+        
+        #### Kekurangan SMOTE:
+        - Dapat menghasilkan noise pada data
+        - Membutuhkan waktu komputasi lebih lama
+        - Perlu berhati-hati dalam menentukan jumlah sampel sintetis
+        
+        #### Parameter Penting:
+        - sampling_strategy: menentukan rasio oversampling
+        - k_neighbors: jumlah tetangga terdekat yang digunakan
+        - random_state: untuk reproducibility
+        """)
+
 
 def show_modeling_page():
     st.title("Modeling & Evaluasi")
-    st.write("Proses pemodelan menggunakan algoritma K-Nearest Neighbors (KNN)")
+    st.write("Perbandingan beberapa metode klasifikasi untuk prediksi stroke")
     
     # Load dan preprocessing data
     @st.cache_data
     def load_data():
         df = pd.read_csv('healthcare-dataset-stroke-data.csv')
         df = df.drop('id', axis=1)
-        df = df[df['gender'] != 'Other']
-        df = df[df['smoking_status'] != 'Unknown']
+        # df = df[df['smoking_status'] != 'Unknown']
         return df
     
     data = load_data()
@@ -633,8 +707,6 @@ def show_modeling_page():
     
     # 2. Train Test Split
     st.header("2. Pembagian Data Training dan Testing")
-    
-    # Tambahkan slider untuk memilih rasio pembagian data
     test_size = st.slider("Pilih rasio data testing (%):", 10, 40, 20)
     test_size = test_size / 100
     
@@ -651,354 +723,301 @@ def show_modeling_page():
         st.write("Jumlah data testing:", len(X_test))
         st.write("Distribusi kelas pada data testing:")
         st.write(pd.Series(y_test).value_counts())
-    
-    # 3. Model Training
-    st.header("3. Pelatihan Model")
-    
+
+    # 3. SMOTE Implementation
+    st.header("3. Penerapan SMOTE")
+    st.write("Menyeimbangkan distribusi kelas menggunakan teknik SMOTE")
+
+    # Tampilkan distribusi kelas sebelum SMOTE
+    col1, col2 = st.columns(2)
+    with col1:
+        st.write("Distribusi kelas sebelum SMOTE:")
+        original_dist = pd.Series(y_train).value_counts()
+        st.write(original_dist)
+        
+        # Visualisasi pie chart sebelum SMOTE
+        fig1, ax1 = plt.subplots(figsize=(8, 6))
+        plt.pie(original_dist.values, 
+                labels=['Tidak Stroke', 'Stroke'], 
+                autopct='%1.1f%%',
+                colors=['lightblue', 'lightcoral'])
+        plt.title('Distribusi Kelas Sebelum SMOTE')
+        st.pyplot(fig1)
+
+    # Terapkan SMOTE
+    smote = SMOTE(random_state=42)
+    X_train_balanced, y_train_balanced = smote.fit_resample(X_train, y_train)
+
+    with col2:
+        st.write("Distribusi kelas setelah SMOTE:")
+        balanced_dist = pd.Series(y_train_balanced).value_counts()
+        st.write(balanced_dist)
+        
+        # Visualisasi pie chart setelah SMOTE
+        fig2, ax2 = plt.subplots(figsize=(8, 6))
+        plt.pie(balanced_dist.values, 
+                labels=['Tidak Stroke', 'Stroke'], 
+                autopct='%1.1f%%',
+                colors=['lightblue', 'lightcoral'])
+        plt.title('Distribusi Kelas Setelah SMOTE')
+        st.pyplot(fig2)
+
+    # 4. Model Training and Evaluation
+    st.header("4. Pelatihan dan Evaluasi Model")
+
     # Tambahkan input untuk parameter KNN
+    st.subheader("Parameter Model KNN")
     n_neighbors = st.number_input("Masukkan nilai K (jumlah tetangga):", min_value=1, max_value=50, value=5)
     
-    # Training model
-    model = KNeighborsClassifier(n_neighbors=n_neighbors)
-    model.fit(X_train, y_train)
-    
-    # Save model
-    with open('knn_model.pkl', 'wb') as f:
-        pickle.dump(model, f)
-    with open('scaler.pkl', 'wb') as f:
-        pickle.dump(scaler, f)
-    
-    # 4. Model Evaluation
-    st.header("4. Evaluasi Model")
-    
-    # Make predictions
-    y_pred = model.predict(X_test)
-    y_pred_train = model.predict(X_train)
-    
-    # Calculate metrics
-    from sklearn.metrics import accuracy_score, precision_score, recall_score, f1_score, confusion_matrix
-    
-    # Function to calculate and display metrics
-    def display_metrics(y_true, y_pred, dataset_name):
-        acc = accuracy_score(y_true, y_pred)
-        prec = precision_score(y_true, y_pred)
-        rec = recall_score(y_true, y_pred)
-        f1 = f1_score(y_true, y_pred)
+    # Function to evaluate model
+    def evaluate_model(model, X_train, X_test, y_train, y_test):
+        model.fit(X_train, y_train)
+        y_pred = model.predict(X_test)
+        y_pred_train = model.predict(X_train)
         
-        st.write(f"Metrics untuk {dataset_name}:")
-        col1, col2, col3, col4 = st.columns(4)
-        with col1:
-            st.metric("Accuracy", f"{acc:.3f}")
-        with col2:
-            st.metric("Precision", f"{prec:.3f}")
-        with col3:
-            st.metric("Recall", f"{rec:.3f}")
-        with col4:
-            st.metric("F1-Score", f"{f1:.3f}")
+        # Test metrics
+        accuracy = accuracy_score(y_test, y_pred)
+        precision = precision_score(y_test, y_pred)
+        recall = recall_score(y_test, y_pred)
+        f1 = f1_score(y_test, y_pred)
+        cm = confusion_matrix(y_test, y_pred)
         
-        # Confusion Matrix
-        cm = confusion_matrix(y_true, y_pred)
-        fig, ax = plt.subplots(figsize=(6, 4))
-        sns.heatmap(cm, annot=True, fmt='d', cmap='Blues')
-        plt.title(f'Confusion Matrix - {dataset_name}')
-        plt.ylabel('Actual')
-        plt.xlabel('Predicted')
-        st.pyplot(fig)
+        # Training metrics
+        train_accuracy = accuracy_score(y_train, y_pred_train)
+        
+        return accuracy, precision, recall, f1, cm, y_pred, train_accuracy
+
+    # Dictionary of models
+    models = {
+        'KNN': KNeighborsClassifier(
+            n_neighbors=n_neighbors,
+            weights='distance',
+            metric='manhattan'  
+        ),
+        'SVM': SVC(
+            probability=True,
+            kernel='rbf',
+            C=1.0,
+            class_weight='balanced'
+        ),
+        'Naive Bayes': GaussianNB()
+    }
+
+    # Train and evaluate all models with balanced data
+    results = {}
+    for name, model in models.items():
+        with st.spinner(f'Training {name} model menggunakan data yang sudah diseimbangkan...'):
+            accuracy, precision, recall, f1, cm, y_pred, train_accuracy = evaluate_model(
+                model, X_train_balanced, X_test, y_train_balanced, y_test
+            )
+            results[name] = {
+                'accuracy': accuracy,
+                'precision': precision,
+                'recall': recall,
+                'f1': f1,
+                'confusion_matrix': cm,
+                'predictions': y_pred,
+                'train_accuracy': train_accuracy
+            }
+            
+            # Save model
+            with open(f'{name.lower().replace(" ", "_")}_model.pkl', 'wb') as f:
+                pickle.dump(model, f)
+
+    # 4. Display Results
+    st.header("5. Perbandingan Hasil Model")
     
-    # Display metrics for both training and testing data
-    st.subheader("Metrics pada Data Training")
-    display_metrics(y_train, y_pred_train, "Data Training")
+    # Create comparison dataframe
+    comparison_df = pd.DataFrame({
+        'Model': results.keys(),
+        'Training Accuracy': [results[model]['train_accuracy'] for model in results],
+        'Testing Accuracy': [results[model]['accuracy'] for model in results],
+        'Precision': [results[model]['precision'] for model in results],
+        'Recall': [results[model]['recall'] for model in results],
+        'F1-Score': [results[model]['f1'] for model in results]
+    })
     
-    st.subheader("Metrics pada Data Testing")
-    display_metrics(y_test, y_pred, "Data Testing")
+    # Display metrics comparison
+    st.subheader("Metrik Perbandingan")
+    st.dataframe(comparison_df.style.highlight_max(axis=0))
     
-    # 5. K-Fold Cross Validation
+    # Plot metrics comparison
+    fig = plt.figure(figsize=(12, 6))
+    metrics = ['Training Accuracy', 'Testing Accuracy', 'Precision', 'Recall', 'F1-Score']
+    x = np.arange(len(models))
+    width = 0.15
+    
+    for i, metric in enumerate(metrics):
+        plt.bar(x + i*width, comparison_df[metric], width, label=metric)
+    
+    plt.xlabel('Models')
+    plt.ylabel('Score')
+    plt.title('Model Performance Comparison')
+    plt.xticks(x + width*2, comparison_df['Model'], rotation=45)
+    plt.legend(bbox_to_anchor=(1.05, 1), loc='upper left')
+    plt.tight_layout()
+    st.pyplot(fig)
+    
+    # Display confusion matrices
+    st.subheader("Confusion Matrices")
+    cols = st.columns(len(models))
+    for i, (name, model_results) in enumerate(results.items()):
+        with cols[i]:
+            st.write(f"{name}")
+            fig, ax = plt.subplots(figsize=(4, 3))
+            sns.heatmap(model_results['confusion_matrix'], 
+                       annot=True, 
+                       fmt='d', 
+                       cmap='Blues',
+                       ax=ax)
+            plt.title(f'{name}\nConfusion Matrix')
+            st.pyplot(fig)
+
+    # 5. K-Fold Cross Validation for all models
     st.header("5. K-Fold Cross Validation")
     
-    from sklearn.model_selection import cross_val_score
     n_folds = st.number_input("Masukkan jumlah fold:", min_value=2, max_value=10, value=5)
     
-    cv_scores = cross_val_score(model, X, y, cv=n_folds)
+    from sklearn.model_selection import cross_val_score
     
-    st.write(f"Scores untuk setiap fold:")
-    for i, score in enumerate(cv_scores, 1):
-        st.write(f"Fold {i}: {score:.3f}")
-    
-    st.write(f"Rata-rata accuracy: {cv_scores.mean():.3f} (±{cv_scores.std()*2:.3f})")
-    
-    # 6. Learning Curve
-    # 6. Learning Curve
-    st.header("6. Learning Curve")
+    cv_results = {}
+    for name, model in models.items():
+        cv_scores = cross_val_score(model, X, y, cv=n_folds)
+        cv_results[name] = {
+            'scores': cv_scores,
+            'mean': cv_scores.mean(),
+            'std': cv_scores.std()
+        }
+        
+        st.write(f"\n**{name}**")
+        st.write(f"Scores untuk setiap fold:")
+        for i, score in enumerate(cv_scores, 1):
+            st.write(f"Fold {i}: {score:.3f}")
+        st.write(f"Rata-rata accuracy: {cv_scores.mean():.3f} (±{cv_scores.std()*2:.3f})")
+
+    # 6. Learning Curves
+    st.header("6. Learning Curves")
     
     from sklearn.model_selection import learning_curve
     
-    train_sizes, train_scores, test_scores = learning_curve(
-        model, X, y, cv=5, n_jobs=-1, 
-        train_sizes=np.linspace(0.1, 1.0, 10))
-    
-    train_mean = np.mean(train_scores, axis=1)
-    train_std = np.std(train_scores, axis=1)
-    test_mean = np.mean(test_scores, axis=1)
-    test_std = np.std(test_scores, axis=1)
-    
-    # Plot learning curve
-    fig, ax = plt.subplots(figsize=(10, 6))
-    plt.plot(train_sizes, train_mean, label='Training score', color='blue')
-    plt.plot(train_sizes, test_mean, label='Cross-validation score', color='green')
-    plt.fill_between(train_sizes, train_mean - train_std, train_mean + train_std, alpha=0.1, color='blue')
-    plt.fill_between(train_sizes, test_mean - test_std, test_mean + test_std, alpha=0.1, color='green')
-    plt.xlabel('Jumlah Data Training')
-    plt.ylabel('Score')
-    plt.title('Learning Curve')
-    plt.legend(loc='best')
-    plt.grid(True)
-    st.pyplot(fig)
+    def plot_learning_curve(model, title):
+        train_sizes, train_scores, test_scores = learning_curve(
+            model, X, y, cv=5, n_jobs=-1, 
+            train_sizes=np.linspace(0.1, 1.0, 10))
+        
+        train_mean = np.mean(train_scores, axis=1)
+        train_std = np.std(train_scores, axis=1)
+        test_mean = np.mean(test_scores, axis=1)
+        test_std = np.std(test_scores, axis=1)
+        
+        fig, ax = plt.subplots(figsize=(10, 6))
+        plt.plot(train_sizes, train_mean, label='Training score')
+        plt.plot(train_sizes, test_mean, label='Cross-validation score')
+        plt.fill_between(train_sizes, train_mean - train_std, 
+                        train_mean + train_std, alpha=0.1)
+        plt.fill_between(train_sizes, test_mean - test_std, 
+                        test_mean + test_std, alpha=0.1)
+        plt.xlabel('Training Examples')
+        plt.ylabel('Score')
+        plt.title(f'Learning Curve - {title}')
+        plt.legend(loc='best')
+        plt.grid(True)
+        return fig
 
-    # Tambahkan penjelasan learning curve
-    st.subheader("Interpretasi Learning Curve")
-    
-    # Analisis gap antara training dan validation score
-    gap = np.mean(train_mean - test_mean)
-    
-    # Analisis tren validation score
-    validation_trend = test_mean[-1] - test_mean[0]
-    
-    # Deteksi overfitting/underfitting
-    if gap > 0.1:  # threshold bisa disesuaikan
-        fitting_status = "overfitting"
-    elif train_mean[-1] < 0.8:  # threshold bisa disesuaikan
-        fitting_status = "underfitting"
-    else:
-        fitting_status = "good fit"
-
-    with st.expander("Klik untuk melihat penjelasan detail Learning Curve"):
-        st.markdown("""
-        ### Komponen Learning Curve:
+    # Plot learning curves for all models
+    for name, model in models.items():
+        st.subheader(f"Learning Curve - {name}")
+        fig = plot_learning_curve(model, name)
+        st.pyplot(fig)
         
-        1. **Garis Biru (Training Score)**:
-           - Menunjukkan performa model pada data training
-           - Semakin tinggi nilai, semakin baik model mempelajari pola data training
-           
-        2. **Garis Hijau (Cross-validation Score)**:
-           - Menunjukkan performa model pada data validasi
-           - Mengindikasikan kemampuan generalisasi model
-           
-        3. **Area Bayangan**:
-           - Menunjukkan standar deviasi scores
-           - Semakin sempit area, semakin stabil performa model
-        
-        ### Analisis Grafik:
-        
-        1. **Gap antara Training dan Validation**:
-           - Gap saat ini: {:.3f}
-           - Gap kecil (< 0.1): Model memiliki variance rendah
-           - Gap besar (> 0.1): Mengindikasikan overfitting
-        
-        2. **Tren Validation Score**:
-           - Perubahan dari awal ke akhir: {:.3f}
-           - Positif: Model membaik dengan penambahan data
-           - Negatif: Model mungkin memerlukan penyesuaian
-        
-        3. **Status Fitting Model**: {}
-        
-        ### Rekomendasi berdasarkan grafik:
-        """.format(gap, validation_trend, fitting_status))
-
-        # Berikan rekomendasi berdasarkan analisis
-        if fitting_status == "overfitting":
+        # Analisis learning curve
+        with st.expander(f"Analisis Learning Curve - {name}"):
             st.markdown("""
-            * **Tindakan yang disarankan untuk mengatasi overfitting:**
-                1. Kurangi kompleksitas model dengan mengurangi nilai K
-                2. Tambah data training jika memungkinkan
-                3. Pertimbangkan feature selection
-                4. Lakukan regularisasi jika menggunakan model lain
-            """)
-        elif fitting_status == "underfitting":
-            st.markdown("""
-            * **Tindakan yang disarankan untuk mengatasi underfitting:**
-                1. Tingkatkan kompleksitas model dengan menambah nilai K
-                2. Tambah fitur yang lebih informatif
-                3. Kurangi regularisasi jika ada
-                4. Pertimbangkan penggunaan model yang lebih kompleks
-            """)
-        else:
-            st.markdown("""
-            * **Model menunjukkan fitting yang baik:**
-                1. Performa training dan validasi seimbang
-                2. Gap yang wajar antara training dan validation score
-                3. Tren validation score stabil
-                4. Lanjutkan dengan parameter model saat ini
-            """)
-
-        st.markdown("""
-        ### Kesimpulan Learning Curve:
-        
-        1. **Convergence (Konvergensi)**:
-           - Jika kedua garis mendatar: Model telah konvergen
-           - Jika masih naik: Mungkin perlu lebih banyak data training
-        
-        2. **Variance (Variasi)**:
-           - Area bayangan sempit: Model stabil
-           - Area bayangan lebar: Model sensitif terhadap data training
-        
-        3. **Bias vs Variance Trade-off**:
-           - High bias (underfitting): Kedua score rendah
-           - High variance (overfitting): Gap besar antara training dan validation
-           - Good balance: Gap kecil dengan score yang dapat diterima
-        
-        ### Implikasi untuk Pengembangan Model:
-        
-        1. **Kebutuhan Data**:
-           - Jika kurva masih naik: Pertimbangkan menambah data training
-           - Jika sudah mendatar: Jumlah data sudah mencukupi
-        
-        2. **Parameter Model**:
-           - Jika overfitting: Pertimbangkan parameter yang lebih sederhana
-           - Jika underfitting: Coba parameter yang lebih kompleks
-        
-        3. **Validasi Silang**:
-           - Stabilitas cross-validation menunjukkan keandalan model
-           - Variasi tinggi menunjukkan perlu penyesuaian parameter
-        """)
-    
-    # 7. Kesimpulan
-    st.header("7. Kesimpulan")
-    
-    # Hitung metrik-metrik untuk kesimpulan
-    test_accuracy = accuracy_score(y_test, y_pred)
-    cv_mean = cv_scores.mean()
-    cv_std = cv_scores.std()
-    
-    # Analisis performa model
-    def get_performance_status(accuracy):
-        if accuracy >= 0.9:
-            return "sangat baik"
-        elif accuracy >= 0.8:
-            return "baik"
-        elif accuracy >= 0.7:
-            return "cukup baik"
-        else:
-            return "perlu peningkatan"
+            ### Komponen Learning Curve:
             
-    # Analisis stabilitas model
-    def get_stability_status(std):
-        if std < 0.02:
-            return "sangat stabil"
-        elif std < 0.05:
-            return "stabil"
-        elif std < 0.1:
-            return "cukup stabil"
-        else:
-            return "kurang stabil"
+            1. **Garis Training Score**:
+               - Menunjukkan performa model pada data training
+               - Semakin tinggi nilai, semakin baik model mempelajari pola data
+               
+            2. **Garis Cross-validation Score**:
+               - Menunjukkan performa model pada data validasi
+               - Mengindikasikan kemampuan generalisasi model
+               
+            3. **Area Bayangan**:
+               - Menunjukkan standar deviasi scores
+               - Semakin sempit area, semakin stabil performa model
+            """)
+
+    # 7. Best Model Analysis
+    st.header("7. Analisis Model Terbaik")
+    best_model = comparison_df.loc[comparison_df['Testing Accuracy'].idxmax(), 'Model']
+    best_accuracy = comparison_df['Testing Accuracy'].max()
     
-    # Analisis gap antara training dan testing
-    train_accuracy = accuracy_score(y_train, y_pred_train)
-    accuracy_gap = abs(train_accuracy - test_accuracy)
-    
-    def get_gap_status(gap):
-        if gap < 0.03:
-            return "sangat baik (model seimbang)"
-        elif gap < 0.05:
-            return "baik"
-        elif gap < 0.1:
-            return "cukup baik tetapi perlu diperhatikan"
-        else:
-            return "terlalu besar (kemungkinan overfitting)"
-            
-    # Generate kesimpulan dinamis
-    performance_status = get_performance_status(test_accuracy)
-    stability_status = get_stability_status(cv_std)
-    gap_status = get_gap_status(accuracy_gap)
-    
-    st.write("""
-    Berdasarkan hasil evaluasi yang telah dilakukan, berikut kesimpulan yang dapat diambil:
-    
-    1. **Performa Model**:
-       - Model KNN dengan k={} menunjukkan performa yang {}
-       - Accuracy pada data testing: {:.2%}
-       - Accuracy pada data training: {:.2%}
-       
-    2. **Stabilitas Model**:
-       - Cross-validation menunjukkan model {}
-       - Rata-rata accuracy CV: {:.2%} (±{:.2%})
-       
-    3. **Generalisasi Model**:
-       - Gap antara training dan testing: {:.2%} ({})
-       - Learning curve menunjukkan {}
-       
-    4. **Rekomendasi**:
-    """.format(
-        n_neighbors,
-        performance_status,
-        test_accuracy,
-        train_accuracy,
-        stability_status,
-        cv_mean,
-        cv_std * 2,
-        accuracy_gap,
-        gap_status,
-        fitting_status
-    ))
-    
-    # Tambahkan rekomendasi berdasarkan analisis
-    if accuracy_gap > 0.1:
-        st.write("""
-        - Pertimbangkan untuk mengurangi kompleksitas model
-        - Tambahkan lebih banyak data training jika memungkinkan
-        - Lakukan feature selection untuk mengurangi noise
-        """)
-    elif test_accuracy < 0.7:
-        st.write("""
-        - Coba tingkatkan nilai k
-        - Tambahkan fitur yang lebih relevan
-        - Pertimbangkan penggunaan algoritma lain
-        """)
-    elif cv_std > 0.1:
-        st.write("""
-        - Lakukan feature engineering
-        - Seimbangkan dataset jika terjadi imbalance
-        - Coba teknik cross-validation yang berbeda
-        """)
-    else:
-        st.write("""
-        - Model sudah cukup baik dan stabil
-        - Dapat dilanjutkan ke tahap deployment
-        - Monitor performa secara berkala
-        """)
-    
-    # Tambahkan visualisasi perbandingan metrik
-    st.subheader("Visualisasi Perbandingan Metrik")
-    
-    metrics_comparison = pd.DataFrame({
-        'Metric': ['Training Accuracy', 'Testing Accuracy', 'Cross-val Mean'],
-        'Value': [train_accuracy, test_accuracy, cv_mean]
-    })
-    
-    fig = plt.figure(figsize=(10, 6))
-    plt.bar(metrics_comparison['Metric'], metrics_comparison['Value'])
-    plt.title('Perbandingan Metrik Performa Model')
-    plt.ylabel('Accuracy')
-    plt.axhline(y=0.7, color='r', linestyle='--', label='Baseline (70%)')
-    plt.legend()
-    st.pyplot(fig)
-    
-    # Tambahkan interpretasi hasil
-    st.markdown("### Interpretasi Hasil:")
     st.write(f"""
-    - Model menunjukkan performa {performance_status} dengan accuracy testing {test_accuracy:.2%}
-    - Stabilitas model {stability_status} berdasarkan standar deviasi cross-validation
-    - Gap antara training dan testing {gap_status}
+    **Model Terbaik: {best_model}**
+    - Training Accuracy: {results[best_model]['train_accuracy']:.3f}
+    - Testing Accuracy: {results[best_model]['accuracy']:.3f}
+    - Precision: {results[best_model]['precision']:.3f}
+    - Recall: {results[best_model]['recall']:.3f}
+    - F1-Score: {results[best_model]['f1']:.3f}
     """)
     
-    if accuracy_gap <= 0.1 and test_accuracy >= 0.7 and cv_std <= 0.1:
-        st.success("✅ Model sudah siap untuk digunakan")
-    else:
-        st.warning("⚠️ Model masih memerlukan penyesuaian berdasarkan rekomendasi di atas")
+    # 8. Model Characteristics
+    st.header("8. Karakteristik Model")
+    st.write("""
+    **1. K-Nearest Neighbors (KNN)**
+    - Model non-parametrik yang sederhana
+    - Bekerja baik dengan dataset kecil-menengah
+    - Sensitif terhadap fitur yang tidak relevan
     
-    # 8. Model Export
-    st.header("8. Export Model")
-    st.write("Model telah disimpan sebagai 'knn_model.pkl' dan scaler sebagai 'scaler.pkl'")
-    st.write("File-file ini akan digunakan untuk melakukan prediksi pada data baru.")
+    **2. Naive Bayes**
+    - Cepat dan efisien
+    - Bekerja baik dengan data kategorikal
+    - Mengasumsikan independensi antar fitur
+    
+    **2. Support Vector Machine (SVM)**
+    - Efektif untuk data dimensi tinggi
+    - Menggunakan kernel RBF untuk menangani non-linearitas
+    - Class weight 'balanced' untuk menangani imbalanced data
+    - Parameter C=1.0 untuk optimasi margin
+    """)
+    
+    # 9. Save Models
+    st.header("9. Penyimpanan Model")
+    best_model_name = best_model.lower().replace(" ", "_")
+    st.write(f"Model terbaik ({best_model}) telah disimpan sebagai '{best_model_name}_model.pkl'")
+    
+    # Save scaler
+    with open('scaler.pkl', 'wb') as f:
+        pickle.dump(scaler, f)
+    st.write("Scaler telah disimpan sebagai 'scaler.pkl'")
+
+    # 10. Kesimpulan
+    st.header("10. Kesimpulan")
+    
+    # Calculate gaps
+    gaps = comparison_df['Training Accuracy'] - comparison_df['Testing Accuracy']
+    
+    st.write(f"""
+    Berdasarkan hasil evaluasi di atas, beberapa kesimpulan yang dapat diambil:
+    
+    1. **Perbandingan Model:**
+       - Model terbaik adalah {best_model} dengan accuracy {best_accuracy:.3f}
+       - Gap terkecil antara training dan testing accuracy adalah {gaps.min():.3f} ({comparison_df.iloc[gaps.argmin()]['Model']})
+       
+    2. **Stabilitas Model:**
+       - Cross-validation menunjukkan {best_model} memiliki performa yang paling stabil
+       - Standar deviasi CV score: {cv_results[best_model]['std']:.3f}
+       
+    3. **Karakteristik Data:**
+       - Dataset menunjukkan ketidakseimbangan kelas
+       - Performa model dipengaruhi oleh distribusi kelas
+       
+    4. **Rekomendasi:**
+       - Gunakan {best_model} untuk implementasi
+       - Pertimbangkan teknik balancing data untuk meningkatkan performa
+       - Monitor performa model secara berkala
+    """)
 
 def main():
     st.sidebar.title("Menu Bar")    
