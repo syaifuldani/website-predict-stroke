@@ -424,6 +424,7 @@ elif menu == "Modeling":
                 leaf_size=30,
                 p=2
             ),
+            
             'SVM': SVC(
                 probability=True,
                 kernel='rbf',
